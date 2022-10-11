@@ -16,9 +16,16 @@ This is the list of usable datasets:
 
 ['S01', 'S03', 'S04', 'S05', 'S06', 'S08', 'S10', 'S11', 'S12', 'S13', 'S14', 'S15', 'S16', 'S17', 'S18', 'S19', 'S20', 'S21', 'S22', 'S25', 'S26', 'S34', 'S35', 'S36', 'S37', 'S38', 'S39', 'S40', 'S41', 'S42', 'S44', 'S45', 'S48']
 
+Out of these, S13 is the first dataset where the participant scored 8/8 out of comprehension
+and where noise didn't render the data unusable.
+
 ### Required Files
 
 - audio.zip
+  - Audio stimuli files
 - datasets.mat
+  - Meta information covering all datasets
 - AliceChapterOne-EEG.csv
-- S__.zip for usable dataset
+  - Time alignment of text heard by participants
+- S__.mat
+  - EEG dataset for one participant
