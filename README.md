@@ -9,6 +9,11 @@ Uses [Brennan 2019](https://doi.org/10.7302/Z29C6VNH) dataset which covers EEG r
 33 datasets out of 49 were used in the analysis. 8 out of them were excluded due to low performance on the comprehension quiz. \
 8 of them come from participants with high noise.
 
+### Used Dataset Files
+
+- S13.mat
+  - Justification: Noise was acceptable and comprehension score was 8/8.
+
 ### Usable Files
 
 Many of the datasets were excluded because the pt's performed badly on comprehension tests or the signal contained too much noise.
