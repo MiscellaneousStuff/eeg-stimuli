@@ -9,6 +9,10 @@ Uses [Brennan 2019](https://doi.org/10.7302/Z29C6VNH) dataset which covers EEG r
 33 datasets out of 49 were used in the analysis. 8 out of them were excluded due to low performance on the comprehension quiz. \
 8 of them come from participants with high noise.
 
+### Audio
+
+Exact number of seconds of all audio files: 723.54 ~= 12 minutes and 3.54 seconds
+
 ### Used Dataset Files
 
 - S13.mat
