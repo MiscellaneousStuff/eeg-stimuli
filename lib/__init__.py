@@ -9,6 +9,12 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
+def subsample(signal, new_freq, old_freq):
+    times = np.arange(len(signal))/old_freq
+    sample_times = np.arange(0, times[-1], 1/new_freq)
+    result = np.interp(sample_times, times, signal)
+    return result
+
 def double_average(x):
     assert len(x.shape) == 1
     f = np.ones(9)/9.0
@@ -17,7 +23,7 @@ def double_average(x):
     return w
 
 def get_semg_feats_orig(eeg_data, hop_length=6, frame_length=16, stft=False, debug=False):
-    xs = eeg_data - eeg_data.mean(axis=0, keepdims=True)
+    xs = eeg_data - eeg_data.mean(axis=1, keepdims=True)
     frame_features = []
     for i in range(eeg_data.shape[0]):
         x = xs[i, :]
@@ -117,7 +123,8 @@ def load_audio(fname):
 
 class BrennanDataset(torch.utils.data.Dataset):
     num_features = 60 * 5
-    
+    num_mels = 128
+
     def __init__(self, root_dir, idx, audio_idx=1):
         self.root_dir = root_dir
         self.idx  = idx
@@ -154,7 +161,7 @@ class BrennanDataset(torch.utils.data.Dataset):
         audio_start_idx = int(audio_start * 16_000)
         audio_end_idx   = int(audio_end * 16_000)
         audio_raw   = self.audio_raw[audio_start_idx:audio_end_idx]
-        audio_feats = get_audio_feats(audio_raw)
+        audio_feats = get_audio_feats(audio_raw, n_mel_channels=self.num_mels)
 
         # EEG Segment
         powerline_freq  = 60 # Assumption based on US recordings
@@ -168,7 +175,9 @@ class BrennanDataset(torch.utils.data.Dataset):
         eeg_raw         = notch_harmonics(eeg_raw, powerline_freq, 500)
         eeg_raw         = remove_drift(eeg_raw, 500)
         print("eeg_raw.shape:", eeg_raw.shape)
-        eeg_feats       = get_semg_feats_orig(eeg_raw)
+        # eeg_raw         = subsample(eeg_raw, 400, 500)
+        print("eeg_raw.shape:", eeg_raw.shape)
+        eeg_feats       = get_semg_feats_orig(eeg_raw, hop_length=4)
         print("eeg_feats.shape:", eeg_feats.shape)
 
         # Dict Segment
