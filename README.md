@@ -38,3 +38,5 @@ and where noise didn't render the data unusable.
   - Time alignment of text heard by participants
 - S__.mat
   - EEG dataset for one participant
+- /proc/S__.mat
+  - Preprocessing and EEG alignment info for one participant
