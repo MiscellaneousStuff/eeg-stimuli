@@ -2692,7 +2692,7 @@ item []:
             text = "D" 
         intervals [350]:
             xmin = 28.486 
-            xmax = 28.636 
+            xmax = 28.636
             text = "EY1" 
         intervals [351]:
             xmin = 28.636 

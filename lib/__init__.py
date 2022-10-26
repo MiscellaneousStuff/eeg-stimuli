@@ -6,6 +6,7 @@ import librosa
 import pandas as pd
 import soundfile as sf
 import numpy as np
+from textgrids import TextGrid
 
 import matplotlib.pyplot as plt
 
@@ -126,15 +127,21 @@ def load_audio(fname):
 
     return audio
 
+def load_phonemes(textgrid_fname):
+    tg = TextGrid(textgrid_fname)
+    phones = tg["phones"]
+    return phones
 
 class BrennanDataset(torch.utils.data.Dataset):
     num_features = 60 * 5
     num_mels = 128
 
-    def __init__(self, root_dir, idx, max_items=0):
+    def __init__(self, root_dir, phoneme_dir, idx, max_items=0):
         self.root_dir = root_dir
         self.idx  = idx
+        self.phoneme_dir = phoneme_dir
 
+        # Metadata
         metadata_fi = \
             os.path.join(root_dir, "AliceChapterOne-EEG.csv")
         self.metadata = metadata = pd.read_csv(metadata_fi)
@@ -155,32 +162,42 @@ class BrennanDataset(torch.utils.data.Dataset):
         eeg_data = load_eeg(eeg_path)
         self.eeg_data = eeg_data
         
-        # Audio
-        audio_dir = os.path.join(root_dir, "audio")
-        audio_idx_range = range(1, 12+1)
-        self.audio_raw_s = [
-            load_audio(os.path.join(audio_dir, f"DownTheRabbitHoleFinal_SoundFile{audio_idx}.wav"))
-            for audio_idx in audio_idx_range]
+        debug = True
+        if not debug:
+            # Audio
+            audio_dir = os.path.join(root_dir, "audio")
+            audio_idx_range = range(1, 12+1)
+            self.audio_raw_s = [
+                load_audio(os.path.join(audio_dir, f"DownTheRabbitHoleFinal_SoundFile{audio_idx}.wav"))
+                for audio_idx in audio_idx_range]
 
-        for i, audio in enumerate(self.audio_raw_s):
-            print(i+1, audio.shape[0] / 16_000)
+        # Phonemes
+        phoneme_fis = os.listdir(phoneme_dir)
+        self.phoneme_s = [load_phonemes(os.path.join(phoneme_dir, fi))
+                          for fi in phoneme_fis]
 
     def __getitem__(self, i):
+        # Target Audio Hz
+        audio_hz = 16_000
+
         # Metadata Segment
         order_idx = self.order_idx_s[i] # EEG
         label = self.labels[i] # Text Label
         metadata_entry = self.metadata[self.metadata["Order"] == order_idx]
-        audio_segment  = metadata_entry.iloc[0]["Segment"] - 1
+        audio_segment  = metadata_entry.iloc[0]["Segment"] - 1 # 0-index, not original 1-index
 
         # Audio Segment
-        audio_onset = metadata_entry.iloc[0]["onset"]
-        audio_start = max(audio_onset - 0.3, 0)
-        audio_end   = min(audio_onset + 1.0, self.audio_raw_s[audio_segment].shape[0])
-        audio_start_idx = int(audio_start * 16_000)
-        audio_end_idx   = int(audio_end * 16_000)
-        audio_raw   = self.audio_raw_s[audio_segment][audio_start_idx:audio_end_idx]
+        audio_onset     = metadata_entry.iloc[0]["onset"]
+        audio_start     = max(audio_onset - 0.3, 0)
+        audio_end       = min(audio_onset + 1.0, self.audio_raw_s[audio_segment].shape[0])
+        audio_start_idx = int(audio_start * audio_hz)
+        audio_end_idx   = int(audio_end * audio_hz)
+        audio_raw       = self.audio_raw_s[audio_segment][audio_start_idx:audio_end_idx]
         # print(i, label, self.audio_raw_s[audio_segment].shape)
-        audio_feats = get_audio_feats(audio_raw, n_mel_channels=self.num_mels)
+        audio_feats = get_audio_feats(
+            audio_raw,
+            hop_length=int(audio_hz / 100),
+            n_mel_channels=self.num_mels)
 
         # EEG Segment
         powerline_freq  = 60 # Assumption based on US recordings
@@ -195,13 +212,17 @@ class BrennanDataset(torch.utils.data.Dataset):
         eeg_feats       = get_semg_feats_orig(eeg_x, hop_length=4)
         eeg_raw         = apply_to_all(subsample, eeg_x.T, 400, 500)
 
+        # Phoneme Segment
+        phonemes        = self.phonemes_s[audio_segment]
+
         # Dict Segment
         data = {
             "label":       label,
             "audio_feats": audio_feats,
             "audio_raw":   audio_raw,
             "eeg_raw":     eeg_raw,
-            "eeg_feats":   eeg_feats
+            "eeg_feats":   eeg_feats,
+            "phonemes":    phonemes
         }
 
         # print(i, label)
