@@ -9,6 +9,12 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
+def apply_to_all(function, signal_array, *args, **kwargs):
+    results = []
+    for i in range(signal_array.shape[1]):
+        results.append(function(signal_array[:,i], *args, **kwargs))
+    return np.stack(results, 1)
+
 def subsample(signal, new_freq, old_freq):
     times = np.arange(len(signal))/old_freq
     sample_times = np.arange(0, times[-1], 1/new_freq)
@@ -81,7 +87,7 @@ def notch_harmonics(signal, freq, sample_frequency):
     for harmonic in range(1,5): # (1,8)
         signal = notch(signal, freq*harmonic, sample_frequency)
     return signal
-    
+
 def get_usable_datasets(fname):
     mat = scipy.io.loadmat(fname)
     usable = [x for x in mat['use'][0]] # file listing
@@ -125,7 +131,7 @@ class BrennanDataset(torch.utils.data.Dataset):
     num_features = 60 * 5
     num_mels = 128
 
-    def __init__(self, root_dir, idx, audio_idx=1):
+    def __init__(self, root_dir, idx, max_items=0):
         self.root_dir = root_dir
         self.idx  = idx
 
@@ -137,48 +143,57 @@ class BrennanDataset(torch.utils.data.Dataset):
         self.eeg_segments = eeg_segments = proc["proc"][0][0][4]
         self.order_idx_s = order_idx_s = \
             [seg[-1] for seg in eeg_segments]
+        if max_items > 0:
+            self.order_idx_s = self.order_idx_s[:max_items]
+        self.max_items = max_items
+
         segment_labels = metadata[metadata["Order"].isin(order_idx_s)]
         self.labels = segment_labels["Word"]
 
+        # EEG
         eeg_path = os.path.join(root_dir, f"{idx}.mat")
         eeg_data = load_eeg(eeg_path)
         self.eeg_data = eeg_data
+        
+        # Audio
+        audio_dir = os.path.join(root_dir, "audio")
+        audio_idx_range = range(1, 12+1)
+        self.audio_raw_s = [
+            load_audio(os.path.join(audio_dir, f"DownTheRabbitHoleFinal_SoundFile{audio_idx}.wav"))
+            for audio_idx in audio_idx_range]
 
-        self.audio_raw = load_audio(
-            os.path.join(root_dir, \
-                f"audio/DownTheRabbitHoleFinal_SoundFile{audio_idx}.wav"))
+        for i, audio in enumerate(self.audio_raw_s):
+            print(i+1, audio.shape[0] / 16_000)
 
     def __getitem__(self, i):
         # Metadata Segment
         order_idx = self.order_idx_s[i] # EEG
         label = self.labels[i] # Text Label
         metadata_entry = self.metadata[self.metadata["Order"] == order_idx]
+        audio_segment  = metadata_entry.iloc[0]["Segment"] - 1
 
         # Audio Segment
         audio_onset = metadata_entry.iloc[0]["onset"]
         audio_start = max(audio_onset - 0.3, 0)
-        audio_end   = min(audio_onset + 1.0, self.audio_raw.shape[0])
+        audio_end   = min(audio_onset + 1.0, self.audio_raw_s[audio_segment].shape[0])
         audio_start_idx = int(audio_start * 16_000)
         audio_end_idx   = int(audio_end * 16_000)
-        audio_raw   = self.audio_raw[audio_start_idx:audio_end_idx]
+        audio_raw   = self.audio_raw_s[audio_segment][audio_start_idx:audio_end_idx]
+        # print(i, label, self.audio_raw_s[audio_segment].shape)
         audio_feats = get_audio_feats(audio_raw, n_mel_channels=self.num_mels)
 
         # EEG Segment
         powerline_freq  = 60 # Assumption based on US recordings
         cur_eeg_segment = [seg for seg in self.eeg_segments
                            if seg[-1] == order_idx][0]
-        eeg_start_idx   = int(cur_eeg_segment[0])
-        eeg_end_idx     = int(cur_eeg_segment[1])
-        print("eeg idxs:", eeg_start_idx, eeg_end_idx)
-        # eeg_raw         = self.eeg_data[:, eeg_start_idx:eeg_end_idx]
-        eeg_raw         = self.eeg_data[:, eeg_start_idx:eeg_end_idx]
-        eeg_raw         = notch_harmonics(eeg_raw, powerline_freq, 500)
-        eeg_raw         = remove_drift(eeg_raw, 500)
-        print("eeg_raw.shape:", eeg_raw.shape)
-        # eeg_raw         = subsample(eeg_raw, 400, 500)
-        print("eeg_raw.shape:", eeg_raw.shape)
-        eeg_feats       = get_semg_feats_orig(eeg_raw, hop_length=4)
-        print("eeg_feats.shape:", eeg_feats.shape)
+        brain_shift     = 150 # Mental response time to stimuli
+        eeg_start_idx   = int(cur_eeg_segment[0]) + brain_shift
+        eeg_end_idx     = int(cur_eeg_segment[1]) + brain_shift
+        eeg_x           = self.eeg_data[:, eeg_start_idx:eeg_end_idx]
+        eeg_x           = notch_harmonics(eeg_x, powerline_freq, 500)
+        eeg_x           = remove_drift(eeg_x, 500)
+        eeg_feats       = get_semg_feats_orig(eeg_x, hop_length=4)
+        eeg_raw         = apply_to_all(subsample, eeg_x.T, 400, 500)
 
         # Dict Segment
         data = {
@@ -189,7 +204,23 @@ class BrennanDataset(torch.utils.data.Dataset):
             "eeg_feats":   eeg_feats
         }
 
+        # print(i, label)
+        
         return data
 
     def __len__(self):
         return len(self.order_idx_s)
+    
+    def get_label_idxs(self, target_label):
+        labels = list(self.labels)
+        # print(labels)
+        if self.max_items:
+            labels = labels[0:self.max_items]
+
+        if target_label in labels:
+            matches = [i for i in range(len(labels))
+                       if target_label == labels[i]]
+            return matches
+        else:
+            ValueError(\
+                f"Attempting to get label {target_label} which does not exist.")
