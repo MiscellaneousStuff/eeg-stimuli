@@ -146,7 +146,10 @@ def get_phone_idxs(audio_start,
                    audio_feats,
                    phoneme_intervals,
                    phoneme_dict,
-                   max_ms_dist=10):
+                   max_ms_dist=10,
+                   debug=False):
+    print("DEBUG:", debug)
+
     # max_ms_dist := how close phoneme needs to be to be considered start of phoneme range
     seq_len   = audio_feats.shape[0]
     phone_ids = np.zeros(seq_len, dtype=np.int64)
@@ -165,12 +168,15 @@ def get_phone_idxs(audio_start,
 
     # Contains the expanded phoneme classes with the entire overlapping phoneme classes
     # print("seq len:", seq_len)
-    print("phoneme_dict:", phoneme_dict)
+    # print("phoneme_dict:", phoneme_dict)
 
-    for i, interval in enumerate(phoneme_intervals):
+    rel_phoneme_count = 0 # Phonemes found within desired segment window
+
+    for interval in phoneme_intervals:
         xmin = interval.xmin
         xmax = interval.xmax
-        # print("interval:", interval, xmin, xmax, audio_start, audio_end)
+        if debug:
+            print("interval:", interval, xmin, xmax, audio_start, audio_end)
         if xmin >= audio_start and xmin <= audio_end or \
            xmax >= audio_start and xmax <= audio_end:
             phone = interval.text.lower()
@@ -180,20 +186,35 @@ def get_phone_idxs(audio_start,
                 phone = phone[:-1]
             ph_id = phoneme_dict.index(phone)
 
-            phone_duration  = interval.xmax - interval.xmin
+            phone_duration  = (interval.xmax - interval.xmin) #- phone_overspill
             phone_win_start_d = int((xmin - audio_start) * 100)
-            phone_win_start = max(i, phone_win_start_d)
+            
+            phone_win_start = phone_win_start_d
+
+            if phone_win_start_d >= 0:
+                phone_win_start = max(rel_phoneme_count, phone_win_start_d)
+            else:
+                phone_win_start = 0
+
             phone_win_duration = int(math.ceil(phone_duration * 100))
             phone_win_end   = phone_win_start + phone_win_duration
 
-            # print("\tPHONE WITHIN SEG", ph_id, phone_duration, phone_win_start_d, phone_win_end) # , cur_phone_ids) # , phone_ids_start)
-
             phone_ids[phone_win_start:phone_win_end] = ph_id
-    
+
+            if debug:
+                print("\tPHONE WITHIN SEG", ph_id, phone_duration, phone_win_duration, phone_win_start_d, phone_win_start, phone_win_end) # , cur_phone_ids) # , phone_ids_start)
+                print("\tphone_ids:", phone_ids)
+
+            rel_phoneme_count += 1
+
     # print(segment_phonemes[0], segment_phonemes[-1])
     # print("phone_ids:", phone_ids, phone_ids.shape)
-    assert (phone_ids >= 0).all(), 'missing aligned phones'
+    
+    if debug:
+        print(phone_ids)
+    assert (phone_ids >= 0).all(), 'missing aligned phones' # f'missing aligned phones: {phone_ids}"
     return phone_ids
+
 
 class BrennanDataset(torch.utils.data.Dataset):
     num_features = 60 * 5
@@ -306,7 +327,8 @@ class BrennanDataset(torch.utils.data.Dataset):
                 audio_end,
                 audio_feats,
                 phoneme_intervals,
-                self.phoneme_dict)
+                self.phoneme_dict,
+                debug=self.debug)
 
         # Dict Segment
         data = {
