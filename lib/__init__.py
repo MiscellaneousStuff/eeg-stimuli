@@ -131,32 +131,56 @@ def load_audio(fname):
 
     return audio
 
-def load_phonemes(textgrid_fname):
+def load_phonemes(textgrid_fname, audio_feats, phoneme_dict):
     tg = TextGrid(textgrid_fname)
-    phones = tg["phones"]
-    return phones
+    phone_intervals = tg["phones"]
+
+    seq_len   = audio_feats.shape[0]
+    phone_ids = np.zeros(seq_len, dtype=np.int64)
+    phone_ids[phone_ids == 0] = -1
+
+    for interval in phone_intervals:
+        xmin = interval.xmin
+        xmax = interval.xmax
+
+        phone = interval.text.lower()
+        if phone in ["", "sp", "spn"]:
+            phone = "sil"
+        if phone[-1] in string.digits:
+            phone = phone[:-1]
+        ph_id = phoneme_dict.index(phone)
+
+        phone_win_start    = int(xmin * 100)
+        phone_duration     = xmax - xmin
+        phone_win_duration = int(math.ceil(phone_duration * 100))
+        phone_win_end      = phone_win_start + phone_win_duration
+
+        phone_ids[phone_win_start:phone_win_end] = ph_id
+    
+    ii = np.where(phone_ids == -1)[0]
+
+    assert (phone_ids >= 0).all(), 'missing aligned phones'
+    return phone_ids
 
 def load_phoneme_dict(phoneme_dict_path):
     with open(phoneme_dict_path) as f:
         content = [l.split(":")[1].strip() for l in f.read().split("\n")]
     return content
 
+"""
 def get_phone_idxs(audio_start,
                    audio_end,
                    audio_feats,
                    phoneme_intervals,
                    phoneme_dict,
-                   max_ms_dist=10,
                    debug=False):
-    print("DEBUG:", debug)
-
     # max_ms_dist := how close phoneme needs to be to be considered start of phoneme range
     seq_len   = audio_feats.shape[0]
     phone_ids = np.zeros(seq_len, dtype=np.int64)
     phone_ids[phone_ids == 0] = -1
     # max_dist = max_ms_dist / 1000
     
-    """
+    # ---
     phone = interval.text.lower()
     # Convert silent phoneme token and strip digits
     if phone in ["", "sp", "spn"]:
@@ -164,7 +188,7 @@ def get_phone_idxs(audio_start,
     if phone[-1] in string.digits:
         phone = phone[:-1]
     ph_id = phoneme_dict.index(phone)
-    """
+    # ---
 
     # Contains the expanded phoneme classes with the entire overlapping phoneme classes
     # print("seq len:", seq_len)
@@ -201,25 +225,23 @@ def get_phone_idxs(audio_start,
 
             phone_ids[phone_win_start:phone_win_end] = ph_id
 
-            if debug:
-                print("\tPHONE WITHIN SEG", ph_id, phone_duration, phone_win_duration, phone_win_start_d, phone_win_start, phone_win_end) # , cur_phone_ids) # , phone_ids_start)
-                print("\tphone_ids:", phone_ids)
-
             rel_phoneme_count += 1
 
     # print(segment_phonemes[0], segment_phonemes[-1])
     # print("phone_ids:", phone_ids, phone_ids.shape)
     
     if debug:
-        print(phone_ids)
+        print([phoneme_dict[phone] for phone in list(phone_ids)])
     assert (phone_ids >= 0).all(), 'missing aligned phones' # f'missing aligned phones: {phone_ids}"
     return phone_ids
+"""
 
 
 class BrennanDataset(torch.utils.data.Dataset):
     num_features = 60 * 5
     num_mels = 128
-    
+    audio_hz = 16_000
+
     def __init__(self,
                  root_dir,
                  phoneme_dir,
@@ -257,11 +279,16 @@ class BrennanDataset(torch.utils.data.Dataset):
         
         # Audio
         audio_dir = os.path.join(root_dir, "audio")
-        audio_idx_range = range(1, 12+1 if not self.debug else 2)
+        audio_idx_range = range(1, 12+1 if not self.debug else 3+1)
         self.audio_raw_s = [
             load_audio(os.path.join(audio_dir, f"DownTheRabbitHoleFinal_SoundFile{audio_idx}.wav"))
             for audio_idx in audio_idx_range]
-        print(audio_idx_range)
+        self.audio_feat_s = [
+            get_audio_feats(
+                audio_raw,
+                hop_length=int(self.audio_hz / 100),
+                n_mel_channels=self.num_mels)
+            for audio_raw in self.audio_raw_s]
 
         # Phoneme Dictionary
         phoneme_dict = load_phoneme_dict(phoneme_dict_path)
@@ -278,34 +305,38 @@ class BrennanDataset(torch.utils.data.Dataset):
 
         # Phonemes
         phoneme_fis = os.listdir(phoneme_dir)
-        self.phoneme_s = [load_phonemes(os.path.join(phoneme_dir, fi))
-                          for fi in phoneme_fis]
+        phoneme_idx_range = range(1, 12+1 if not self.debug else 3+1)
+        self.phoneme_s = [load_phonemes(
+                            os.path.join(phoneme_dir, \
+                                f"DownTheRabbitHoleFinal_SoundFile{phoneme_idx_range[i]}.TextGrid"),
+                            audio_feats,
+                            phoneme_dict)
+                          for i, audio_feats in enumerate(self.audio_feat_s)]
 
     def __getitem__(self, i):
         # Target Audio Hz
         audio_hz = 16_000
 
         # Metadata Segment
-        order_idx = self.order_idx_s[i] # EEG
-        label = self.labels[i] # Text Label
-        metadata_entry = self.metadata[self.metadata["Order"] == order_idx]
-        audio_segment  = metadata_entry.iloc[0]["Segment"] - 1 # 0-index, not original 1-index
+        order_idx       = self.order_idx_s[i] # EEG
+        label           = self.labels[i] # Text Label
+        metadata_entry  = self.metadata[self.metadata["Order"] == order_idx]
+        audio_segment   = metadata_entry.iloc[0]["Segment"] - 1 # 0-index, not original 1-index
 
         # Audio Segment
         audio_len       = self.audio_raw_s[audio_segment].shape[0] / audio_hz
         audio_onset     = metadata_entry.iloc[0]["onset"]
-        audio_duration  = metadata_entry.iloc[0]["Length"]
         audio_start     = max(audio_onset - 0.3, 0)
         audio_end       = min(audio_onset + 1.0, audio_len)
         audio_start_idx = int(audio_start * audio_hz)
         audio_end_idx   = int(audio_end * audio_hz)
         audio_raw       = self.audio_raw_s[audio_segment][audio_start_idx:audio_end_idx]
-        # print(i, label, self.audio_raw_s[audio_segment].shape)
-        audio_feats = get_audio_feats(
-            audio_raw,
-            hop_length=int(audio_hz / 100),
-            n_mel_channels=self.num_mels)
         
+        # Audio Feats Segment
+        audio_start_win = int(audio_start * 100)
+        audio_end_win   = int(audio_end * 100)
+        audio_feats     = self.audio_feat_s[audio_segment][audio_start_win:audio_end_win]
+
         # EEG Segment
         powerline_freq  = 60 # Assumption based on US recordings
         cur_eeg_segment = [seg for seg in self.eeg_segments
@@ -320,6 +351,10 @@ class BrennanDataset(torch.utils.data.Dataset):
         eeg_raw         = apply_to_all(subsample, eeg_x.T, 400, 500)
 
         # Phoneme Segment
+        phonemes        = self.phoneme_s[audio_segment][audio_start_win:audio_end_win]
+
+        """
+        # Phoneme Segment
         phoneme_intervals = self.phoneme_s[audio_segment]
         phonemes        = \
             get_phone_idxs(
@@ -329,6 +364,7 @@ class BrennanDataset(torch.utils.data.Dataset):
                 phoneme_intervals,
                 self.phoneme_dict,
                 debug=self.debug)
+        """
 
         # Dict Segment
         data = {
