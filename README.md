@@ -4,6 +4,12 @@
 EEG Speech Stimuli (Listening) Decoding Research.
 Uses [Brennan 2019](https://doi.org/10.7302/Z29C6VNH) dataset which covers EEG recordings while listening to the first chapter of Alice in Wonderland.
 
+### Results
+
+Novel methods proposed:
+- Phoneme prediction using EEG features (mostly envelope related) into TransformerEncoder layer and then using MLP to decode Mel Spectrogram.
+  - 20% phoneme class accuracy on test set (trained on 1916 segments, tested on 223 segments).
+
 ## Dataset
 [Brennan 2019](https://doi.org/10.7302/Z29C6VNH) \
 33 datasets out of 49 were used in the analysis. 8 out of them were excluded due to low performance on the comprehension quiz. \
